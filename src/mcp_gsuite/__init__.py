@@ -14,6 +14,7 @@ from mcp_gsuite.tools.calendar.get_events import get_events
 from mcp_gsuite.tools.calendar.create_event import create_event
 from mcp_gsuite.tools.calendar.delete_event import delete_event
 from mcp_gsuite.tools.calendar.update_event import update_event
+from mcp_gsuite.tools.auth import auth
 from saaga_mcp_base.base.base_mcp import create_mcp
 
 
@@ -30,6 +31,7 @@ def main():
         create_event,
         delete_event,
         update_event,
+        auth,
     ]
 
     mcp = create_mcp("mcp_gsuite", tools=all_tools)
