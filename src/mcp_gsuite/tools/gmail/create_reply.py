@@ -33,7 +33,7 @@ async def create_reply(
 
         # Fetch the original message details first
         original_message_data, _ = await asyncio.to_thread(
-            gmail_service.get_email_by_id_with_attachments, email_id=original_message_id
+            gmail_service.get_email_by_id, email_id=original_message_id
         )
 
         if not original_message_data:

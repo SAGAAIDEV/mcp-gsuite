@@ -6,6 +6,9 @@ async def auth():
     creds = authenticate()
     if creds:
         email = get_email_from_credentials(creds)
-        return f"Successfully authenticated {email}"
+        if email:
+            return f"Successfully authenticated {email}"
+        else:
+            return "Authentication successful, but failed to retrieve email."
     else:
         return None
