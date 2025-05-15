@@ -13,3 +13,5 @@ wheels/
 oauth2creds.json
 .accounts.json
 .oauth2.*.json
+.credentials
+*.sqlite3

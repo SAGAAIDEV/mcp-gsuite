@@ -226,3 +226,124 @@ You can also watch the server logs with this command:
 ```bash
 tail -n 20 -f ~/Library/Logs/Claude/mcp-server-mcp-gsuite.log
 ```
+
+# Google OAuth 2.0 Authentication Flow Application
+
+This Python application demonstrates how to perform a Google OAuth 2.0 authorization flow for an installed application. It authenticates a user, opens a browser window for consent, and then saves the obtained credentials (token) to a local file for future use.
+
+## Prerequisites
+
+1.  **Python 3.7+**
+2.  **Google Cloud Project**:
+    *   Create a new project or use an existing one in the [Google Cloud Console](https://console.cloud.google.com/).
+    *   **Enable necessary APIs**: For the default scopes (`userinfo.email`, `userinfo.profile`), you generally don't need to enable a specific API, but if you change the scopes (e.g., to access Google Drive), you must enable the corresponding API (e.g., Google Drive API) for your project.
+    *   **Configure OAuth Consent Screen**:
+        *   Go to "APIs & Services" -> "OAuth consent screen".
+        *   Choose "External" or "Internal" user type.
+        *   Fill in the application name, user support email, and developer contact information.
+        *   You can skip scopes configuration here if you define them in your code, or add them if you prefer.
+        *   Add test users if your app is in testing mode and not yet published.
+    *   **Create OAuth 2.0 Client ID**:
+        *   Go to "APIs & Services" -> "Credentials".
+        *   Click "+ CREATE CREDENTIALS" -> "OAuth client ID".
+        *   Select "Desktop app" as the Application type.
+        *   Give it a name (e.g., "Desktop Client 1").
+        *   Click "Create".
+        *   A dialog will appear showing your "Client ID" and "Client Secret". **Download the JSON** file by clicking the download icon next to the client ID. This is your `client_secret.json` file.
+
+## Setup
+
+1.  **Clone or Download the Code**:
+    Get the `google_auth_flow.py` and `requirements.txt` files.
+
+2.  **Create a Virtual Environment (Recommended)**:
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # On Windows: venv\Scripts\activate
+    ```
+
+3.  **Install Dependencies**:
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+4.  **Set Environment Variables**:
+    You need to set two environment variables before running the script:
+
+    *   `CLIENT_SECRET_FILE`: The **absolute path** to your downloaded `client_secret.json` file.
+        ```bash
+        # Example for macOS/Linux
+        export CLIENT_SECRET_FILE="/path/to/your/client_secret.json"
+
+        # Example for Windows (Command Prompt)
+        set CLIENT_SECRET_FILE="C:\path\to\your\client_secret.json"
+
+        # Example for Windows (PowerShell)
+        $env:CLIENT_SECRET_FILE="C:\path\to\your\client_secret.json"
+        ```
+
+    *   `CREDENTIALS_STORAGE_DIR`: The **absolute path** to a directory where the script will save the `token.json` file (user's credentials). The script will create this directory if it doesn't exist.
+        ```bash
+        # Example for macOS/Linux
+        export CREDENTIALS_STORAGE_DIR="/path/to/your/credentials_storage_dir"
+
+        # Example for Windows (Command Prompt)
+        set CREDENTIALS_STORAGE_DIR="C:\path\to\your\credentials_storage_dir"
+
+        # Example for Windows (PowerShell)
+        $env:CREDENTIALS_STORAGE_DIR="C:\path\to\your\credentials_storage_dir"
+        ```
+        Ensure this directory is writable by the user running the script.
+
+## Running the Application
+
+Once the setup is complete and environment variables are set, run the Python script:
+
+```bash
+python google_auth_flow.py
+```
+
+**First Run**:
+*   The script will print a message indicating that it needs to perform authentication.
+*   It will attempt to open a new tab in your default web browser.
+*   You will be prompted to choose a Google account and grant the requested permissions (scopes) to your application.
+*   After you grant permission, the browser tab may close automatically, or show an "Authentication successful" message. Control will return to the script.
+*   The script will then save the obtained credentials (access token and refresh token) into a file named `token.json` inside the directory specified by `CREDENTIALS_STORAGE_DIR`.
+
+**Subsequent Runs**:
+*   The script will first try to load the saved credentials from `token.json`.
+*   If the credentials are valid and not expired, it will use them directly, and you won't need to go through the browser authentication flow again.
+*   If the credentials have expired but a refresh token is available, the script will attempt to refresh them automatically.
+*   If credentials are not found, invalid, or cannot be refreshed, the browser-based authentication flow will be initiated again.
+
+## Customizing Scopes
+
+The default scopes requested are for user email and profile information:
+```python
+DEFAULT_SCOPES = [
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/userinfo.profile'
+]
+```
+To request different permissions, modify the `DEFAULT_SCOPES` list in `google_auth_flow.py` or pass a custom list of scopes to the `authenticate()` function.
+
+Example for read-only access to Google Drive:
+```python
+custom_scopes = ['https://www.googleapis.com/auth/drive.readonly']
+credentials = authenticate(scopes=custom_scopes)
+```
+Make sure that the APIs corresponding to your requested scopes are enabled in your Google Cloud Project.
+
+## Troubleshooting
+
+*   **`Error: Environment variable CLIENT_SECRET_FILE is not set.`**: Ensure you have set this environment variable to the correct path of your `client_secret.json` file.
+*   **`Error: Environment variable CREDENTIALS_STORAGE_DIR is not set.`**: Ensure you have set this environment variable to the desired directory path for storing `token.json`.
+*   **`Error: Client secret file not found at ...`**: Double-check the path provided in `CLIENT_SECRET_FILE`.
+*   **`Error during authentication flow: ...`**: This can have various causes:
+    *   The API for the requested scope might not be enabled in your Google Cloud project.
+    *   The OAuth consent screen might not be configured correctly.
+    *   Issues with redirect URIs (though `InstalledAppFlow` usually handles this well for desktop apps).
+    *   Network issues.
+*   **Permissions errors when saving `token.json`**: Ensure the directory specified by `CREDENTIALS_STORAGE_DIR` is writable.
+
+Refer to the [Google Cloud Console](https://console.cloud.google.com/) and the [Google API Client Libraries documentation](https://developers.google.com/api-client-library) for more detailed help.

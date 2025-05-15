@@ -6,73 +6,123 @@ from mcp.types import (
     EmbeddedResource,
     LoggingLevel,
 )
-from . import gmail
+from .lib import gmail
 import json
 from . import toolhandler
 import base64
+import asyncio
+from typing import Any, Optional
+
+# Import the mcp instance from server.py
+from .server import mcp
+from . import gauth
+
 
 def decode_base64_data(file_data):
     standard_base64_data = file_data.replace("-", "+").replace("_", "/")
     missing_padding = len(standard_base64_data) % 4
     if missing_padding:
-        standard_base64_data += '=' * (4 - missing_padding)
+        standard_base64_data += "=" * (4 - missing_padding)
     return base64.b64decode(standard_base64_data, validate=True)
 
-class QueryEmailsToolHandler(toolhandler.ToolHandler):
-    def __init__(self):
-        super().__init__("query_gmail_emails")
 
-    def get_tool_description(self) -> Tool:
-        return Tool(
-            name=self.name,
-            description="""Query Gmail emails based on an optional search query. 
-            Returns emails in reverse chronological order (newest first).
-            Returns metadata such as subject and also a short summary of the content.
-            """,
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "__user_id__": self.get_user_id_arg_schema(),
-                    "query": {
-                        "type": "string",
-                        "description": """Gmail search query (optional). Examples:
-                            - a $string: Search email body, subject, and sender information for $string
-                            - 'is:unread' for unread emails
-                            - 'from:example@gmail.com' for emails from a specific sender
-                            - 'newer_than:2d' for emails from last 2 days
-                            - 'has:attachment' for emails with attachments
-                            If not provided, returns recent emails without filtering.""",
-                        "required": False
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "description": "Maximum number of emails to retrieve (1-500)",
-                        "minimum": 1,
-                        "maximum": 500,
-                        "default": 100
-                    }
-                },
-                "required": [toolhandler.USER_ID_ARG]
-            }
-        )
+@mcp.tool()
+async def query_gmail_emails(
+    user_id: str,
+    query: Optional[str] = None,  # Or str | None for Python 3.10+
+    max_results: int = 100,
+) -> str:
+    """Query Gmail emails based on an optional search query.
+    Returns emails in reverse chronological order (newest first).
+    Includes metadata like subject and a short summary of the content.
 
-    def run_tool(self, args: dict) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
-
-        user_id = args.get(toolhandler.USER_ID_ARG)
-        if not user_id:
-            raise RuntimeError(f"Missing required argument: {toolhandler.USER_ID_ARG}")
+    Args:
+        user_id: The EMAIL of the Google account for this action.
+                 Ensure this email is configured in the application.
+        query: Gmail search query (optional). Examples:
+               - "is:unread"
+               - "from:example@gmail.com"
+               - "newer_than:2d"
+               - "has:attachment"
+               If omitted, recent emails are returned.
+        max_results: Maximum number of emails to retrieve (1-500, default 100).
+    """
+    try:
+        await asyncio.to_thread(gauth.setup_oauth2, user_id)
 
         gmail_service = gmail.GmailService(user_id=user_id)
-        query = args.get('query')
-        max_results = args.get('max_results', 100)
-        emails = gmail_service.query_emails(query=query, max_results=max_results)
 
-        return [
-            TextContent(
-                type="text",
-                text=json.dumps(emails, indent=2)
+        emails = await asyncio.to_thread(
+            gmail_service.query_emails, query=query, max_results=max_results
+        )
+
+        if emails is None:
+            return json.dumps(
+                {
+                    "message": "No emails found or failed to retrieve.",
+                    "user_id": user_id,
+                    "query": query,
+                },
+                indent=2,
             )
-        ]
+
+        return json.dumps(emails, indent=2)
+
+    except Exception as e:
+        # import logging
+        # logger = logging.getLogger(__name__)
+        # logger.exception(f"Error in query_gmail_emails for {user_id}")
+        error_message = {"error": f"Failed to query emails for {user_id}: {str(e)}"}
+        return json.dumps(error_message, indent=2)
+
+
+@mcp.tool()
+async def get_gmail_email(user_id: str, email_id: str) -> str:
+    """Retrieves a complete Gmail email message by its ID.
+    Includes the full message body and metadata, including attachment IDs.
+
+    Args:
+        user_id: The EMAIL of the Google account for this action.
+                 Ensure this email is configured in the application.
+        email_id: The ID of the Gmail message to retrieve.
+    """
+    try:
+        await asyncio.to_thread(gauth.setup_oauth2, user_id)
+
+        gmail_service = gmail.GmailService(user_id=user_id)
+
+        email_data_tuple = await asyncio.to_thread(
+            gmail_service.get_email_by_id_with_attachments, email_id
+        )
+
+        # Assuming get_email_by_id_with_attachments returns (email_details, attachments_list)
+        # or (None, None) on failure.
+        if email_data_tuple and email_data_tuple[0] is not None:
+            email_details, attachments_list = email_data_tuple
+            email_details["attachments"] = (
+                attachments_list  # Merge attachments into the main dict
+            )
+            return json.dumps(email_details, indent=2)
+        else:
+            # Corrected json.dumps string
+            return json.dumps(
+                {
+                    "error": f"Failed to retrieve email with ID: {email_id}",
+                    "user_id": user_id,
+                },
+                indent=2,
+            )
+
+    except Exception as e:
+        # import logging
+        # logger = logging.getLogger(__name__)
+        # logger.exception(f"Error in get_gmail_email for {user_id} with email_id {email_id}")
+        # Corrected json.dumps string
+        error_message = {
+            "error": f"Failed to retrieve email {email_id} for {user_id}: {str(e)}"
+        }
+        return json.dumps(error_message, indent=2)
+
 
 class GetEmailByIdToolHandler(toolhandler.ToolHandler):
     def __init__(self):
@@ -88,14 +138,16 @@ class GetEmailByIdToolHandler(toolhandler.ToolHandler):
                     "__user_id__": self.get_user_id_arg_schema(),
                     "email_id": {
                         "type": "string",
-                        "description": "The ID of the Gmail message to retrieve"
-                    }
+                        "description": "The ID of the Gmail message to retrieve",
+                    },
                 },
-                "required": ["email_id", toolhandler.USER_ID_ARG]
-            }
+                "required": ["email_id", toolhandler.USER_ID_ARG],
+            },
         )
 
-    def run_tool(self, args: dict) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+    def run_tool(
+        self, args: dict
+    ) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
         if "email_id" not in args:
             raise RuntimeError("Missing required argument: email_id")
 
@@ -103,24 +155,22 @@ class GetEmailByIdToolHandler(toolhandler.ToolHandler):
         if not user_id:
             raise RuntimeError(f"Missing required argument: {toolhandler.USER_ID_ARG}")
         gmail_service = gmail.GmailService(user_id=user_id)
-        email, attachments = gmail_service.get_email_by_id_with_attachments(args["email_id"])
+        email, attachments = gmail_service.get_email_by_id_with_attachments(
+            args["email_id"]
+        )
 
         if email is None:
             return [
                 TextContent(
                     type="text",
-                    text=f"Failed to retrieve email with ID: {args['email_id']}"
+                    text=f"Failed to retrieve email with ID: {args['email_id']}",
                 )
             ]
 
         email["attachments"] = attachments
 
-        return [
-            TextContent(
-                type="text",
-                text=json.dumps(email, indent=2)
-            )
-        ]
+        return [TextContent(type="text", text=json.dumps(email, indent=2))]
+
 
 class BulkGetEmailsByIdsToolHandler(toolhandler.ToolHandler):
     def __init__(self):
@@ -136,17 +186,17 @@ class BulkGetEmailsByIdsToolHandler(toolhandler.ToolHandler):
                     "__user_id__": self.get_user_id_arg_schema(),
                     "email_ids": {
                         "type": "array",
-                        "items": {
-                            "type": "string"
-                        },
-                        "description": "List of Gmail message IDs to retrieve"
-                    }
+                        "items": {"type": "string"},
+                        "description": "List of Gmail message IDs to retrieve",
+                    },
                 },
-                "required": ["email_ids", toolhandler.USER_ID_ARG]
-            }
+                "required": ["email_ids", toolhandler.USER_ID_ARG],
+            },
         )
 
-    def run_tool(self, args: dict) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+    def run_tool(
+        self, args: dict
+    ) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
         if "email_ids" not in args:
             raise RuntimeError("Missing required argument: email_ids")
 
@@ -154,10 +204,12 @@ class BulkGetEmailsByIdsToolHandler(toolhandler.ToolHandler):
         if not user_id:
             raise RuntimeError(f"Missing required argument: {toolhandler.USER_ID_ARG}")
         gmail_service = gmail.GmailService(user_id=user_id)
-        
+
         results = []
         for email_id in args["email_ids"]:
-            email, attachments = gmail_service.get_email_by_id_with_attachments(email_id)
+            email, attachments = gmail_service.get_email_by_id_with_attachments(
+                email_id
+            )
             if email is not None:
                 email["attachments"] = attachments
                 results.append(email)
@@ -166,16 +218,12 @@ class BulkGetEmailsByIdsToolHandler(toolhandler.ToolHandler):
             return [
                 TextContent(
                     type="text",
-                    text=f"Failed to retrieve any emails from the provided IDs"
+                    text=f"Failed to retrieve any emails from the provided IDs",
                 )
             ]
 
-        return [
-            TextContent(
-                type="text",
-                text=json.dumps(results, indent=2)
-            )
-        ]
+        return [TextContent(type="text", text=json.dumps(results, indent=2))]
+
 
 class CreateDraftToolHandler(toolhandler.ToolHandler):
     def __init__(self):
@@ -187,37 +235,36 @@ class CreateDraftToolHandler(toolhandler.ToolHandler):
             description="""Creates a draft email message from scratch in Gmail with specified recipient, subject, body, and optional CC recipients.
             
             Do NOT use this tool when you want to draft or send a REPLY to an existing message. This tool does NOT include any previous message content. Use the reply_gmail_email tool
-            with send=False instead."
-            """,
+            with send=False instead.""",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "__user_id__": self.get_user_id_arg_schema(),
                     "to": {
                         "type": "string",
-                        "description": "Email address of the recipient"
+                        "description": "Email address of the recipient",
                     },
                     "subject": {
                         "type": "string",
-                        "description": "Subject line of the email"
+                        "description": "Subject line of the email",
                     },
                     "body": {
                         "type": "string",
-                        "description": "Body content of the email"
+                        "description": "Body content of the email",
                     },
                     "cc": {
                         "type": "array",
-                        "items": {
-                            "type": "string"
-                        },
-                        "description": "Optional list of email addresses to CC"
-                    }
+                        "items": {"type": "string"},
+                        "description": "Optional list of email addresses to CC",
+                    },
                 },
-                "required": ["to", "subject", "body", toolhandler.USER_ID_ARG]
-            }
+                "required": ["to", "subject", "body", toolhandler.USER_ID_ARG],
+            },
         )
 
-    def run_tool(self, args: dict) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+    def run_tool(
+        self, args: dict
+    ) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
         required = ["to", "subject", "body"]
         if not all(key in args for key in required):
             raise RuntimeError(f"Missing required arguments: {', '.join(required)}")
@@ -227,26 +274,14 @@ class CreateDraftToolHandler(toolhandler.ToolHandler):
             raise RuntimeError(f"Missing required argument: {toolhandler.USER_ID_ARG}")
         gmail_service = gmail.GmailService(user_id=user_id)
         draft = gmail_service.create_draft(
-            to=args["to"],
-            subject=args["subject"],
-            body=args["body"],
-            cc=args.get("cc")
+            to=args["to"], subject=args["subject"], body=args["body"], cc=args.get("cc")
         )
 
         if draft is None:
-            return [
-                TextContent(
-                    type="text",
-                    text="Failed to create draft email"
-                )
-            ]
+            return [TextContent(type="text", text="Failed to create draft email")]
 
-        return [
-            TextContent(
-                type="text",
-                text=json.dumps(draft, indent=2)
-            )
-        ]
+        return [TextContent(type="text", text=json.dumps(draft, indent=2))]
+
 
 class DeleteDraftToolHandler(toolhandler.ToolHandler):
     def __init__(self):
@@ -262,14 +297,16 @@ class DeleteDraftToolHandler(toolhandler.ToolHandler):
                     "__user_id__": self.get_user_id_arg_schema(),
                     "draft_id": {
                         "type": "string",
-                        "description": "The ID of the draft to delete"
-                    }
+                        "description": "The ID of the draft to delete",
+                    },
                 },
-                "required": ["draft_id", toolhandler.USER_ID_ARG]
-            }
+                "required": ["draft_id", toolhandler.USER_ID_ARG],
+            },
         )
 
-    def run_tool(self, args: dict) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+    def run_tool(
+        self, args: dict
+    ) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
         if "draft_id" not in args:
             raise RuntimeError("Missing required argument: draft_id")
 
@@ -282,9 +319,14 @@ class DeleteDraftToolHandler(toolhandler.ToolHandler):
         return [
             TextContent(
                 type="text",
-                text="Successfully deleted draft" if success else f"Failed to delete draft with ID: {args['draft_id']}"
+                text=(
+                    "Successfully deleted draft"
+                    if success
+                    else f"Failed to delete draft with ID: {args['draft_id']}"
+                ),
             )
         ]
+
 
 class ReplyEmailToolHandler(toolhandler.ToolHandler):
     def __init__(self):
@@ -303,45 +345,51 @@ class ReplyEmailToolHandler(toolhandler.ToolHandler):
                     "__user_id__": self.get_user_id_arg_schema(),
                     "original_message_id": {
                         "type": "string",
-                        "description": "The ID of the Gmail message to reply to"
+                        "description": "The ID of the Gmail message to reply to",
                     },
                     "reply_body": {
                         "type": "string",
-                        "description": "The body content of your reply message"
+                        "description": "The body content of your reply message",
                     },
                     "send": {
                         "type": "boolean",
                         "description": "If true, sends the reply immediately. If false, saves as draft.",
-                        "default": False
+                        "default": False,
                     },
                     "cc": {
                         "type": "array",
-                        "items": {
-                            "type": "string"
-                        },
-                        "description": "Optional list of email addresses to CC on the reply"
-                    }
+                        "items": {"type": "string"},
+                        "description": "Optional list of email addresses to CC on the reply",
+                    },
                 },
-                "required": ["original_message_id", "reply_body", toolhandler.USER_ID_ARG]
-            }
+                "required": [
+                    "original_message_id",
+                    "reply_body",
+                    toolhandler.USER_ID_ARG,
+                ],
+            },
         )
 
-    def run_tool(self, args: dict) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+    def run_tool(
+        self, args: dict
+    ) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
         if not all(key in args for key in ["original_message_id", "reply_body"]):
-            raise RuntimeError("Missing required arguments: original_message_id and reply_body")
+            raise RuntimeError(
+                "Missing required arguments: original_message_id and reply_body"
+            )
 
         user_id = args.get(toolhandler.USER_ID_ARG)
         if not user_id:
             raise RuntimeError(f"Missing required argument: {toolhandler.USER_ID_ARG}")
         gmail_service = gmail.GmailService(user_id=user_id)
-        
+
         # First get the original message to extract necessary information
         original_message = gmail_service.get_email_by_id(args["original_message_id"])
         if original_message is None:
             return [
                 TextContent(
                     type="text",
-                    text=f"Failed to retrieve original message with ID: {args['original_message_id']}"
+                    text=f"Failed to retrieve original message with ID: {args['original_message_id']}",
                 )
             ]
 
@@ -350,23 +398,19 @@ class ReplyEmailToolHandler(toolhandler.ToolHandler):
             original_message=original_message,
             reply_body=args.get("reply_body", ""),
             send=args.get("send", False),
-            cc=args.get("cc")
+            cc=args.get("cc"),
         )
 
         if result is None:
             return [
                 TextContent(
                     type="text",
-                    text=f"Failed to {'send' if args.get('send', True) else 'draft'} reply email"
+                    text=f"Failed to {'send' if args.get('send', True) else 'draft'} reply email",
                 )
             ]
 
-        return [
-            TextContent(
-                type="text",
-                text=json.dumps(result, indent=2)
-            )
-        ]
+        return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
 
 class GetAttachmentToolHandler(toolhandler.ToolHandler):
     def __init__(self):
@@ -382,30 +426,38 @@ class GetAttachmentToolHandler(toolhandler.ToolHandler):
                     "__user_id__": self.get_user_id_arg_schema(),
                     "message_id": {
                         "type": "string",
-                        "description": "The ID of the Gmail message containing the attachment"
+                        "description": "The ID of the Gmail message containing the attachment",
                     },
                     "attachment_id": {
                         "type": "string",
-                        "description": "The ID of the attachment to retrieve"
+                        "description": "The ID of the attachment to retrieve",
                     },
                     "mime_type": {
                         "type": "string",
-                        "description": "The MIME type of the attachment"
+                        "description": "The MIME type of the attachment",
                     },
                     "filename": {
                         "type": "string",
-                        "description": "The filename of the attachment"
+                        "description": "The filename of the attachment",
                     },
                     "save_to_disk": {
                         "type": "string",
-                        "description": "The fullpath to save the attachment to disk. If not provided, the attachment is returned as a resource."
-                    }
+                        "description": "The fullpath to save the attachment to disk. If not provided, the attachment is returned as a resource.",
+                    },
                 },
-                "required": ["message_id", "attachment_id", "mime_type", "filename", toolhandler.USER_ID_ARG]
-            }
+                "required": [
+                    "message_id",
+                    "attachment_id",
+                    "mime_type",
+                    "filename",
+                    toolhandler.USER_ID_ARG,
+                ],
+            },
         )
 
-    def run_tool(self, args: dict) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+    def run_tool(
+        self, args: dict
+    ) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
         if "message_id" not in args:
             raise RuntimeError("Missing required argument: message_id")
         if "attachment_id" not in args:
@@ -420,13 +472,15 @@ class GetAttachmentToolHandler(toolhandler.ToolHandler):
         if not user_id:
             raise RuntimeError(f"Missing required argument: {toolhandler.USER_ID_ARG}")
         gmail_service = gmail.GmailService(user_id=user_id)
-        attachment_data = gmail_service.get_attachment(args["message_id"], args["attachment_id"])
+        attachment_data = gmail_service.get_attachment(
+            args["message_id"], args["attachment_id"]
+        )
 
         if attachment_data is None:
             return [
                 TextContent(
                     type="text",
-                    text=f"Failed to retrieve attachment with ID: {args['attachment_id']} from message: {args['message_id']}"
+                    text=f"Failed to retrieve attachment with ID: {args['attachment_id']} from message: {args['message_id']}",
                 )
             ]
 
@@ -439,7 +493,7 @@ class GetAttachmentToolHandler(toolhandler.ToolHandler):
             return [
                 TextContent(
                     type="text",
-                    text=f"Attachment saved to disk: {args['save_to_disk']}"
+                    text=f"Attachment saved to disk: {args['save_to_disk']}",
                 )
             ]
         return [
@@ -452,6 +506,7 @@ class GetAttachmentToolHandler(toolhandler.ToolHandler):
                 },
             )
         ]
+
 
 class BulkSaveAttachmentsToolHandler(toolhandler.ToolHandler):
     def __init__(self):
@@ -472,26 +527,28 @@ class BulkSaveAttachmentsToolHandler(toolhandler.ToolHandler):
                             "properties": {
                                 "message_id": {
                                     "type": "string",
-                                    "description": "ID of the Gmail message containing the attachment"
+                                    "description": "ID of the Gmail message containing the attachment",
                                 },
                                 "part_id": {
-                                    "type": "string", 
-                                    "description": "ID of the part containing the attachment"
+                                    "type": "string",
+                                    "description": "ID of the part containing the attachment",
                                 },
                                 "save_path": {
                                     "type": "string",
-                                    "description": "Path where the attachment should be saved"
-                                }
+                                    "description": "Path where the attachment should be saved",
+                                },
                             },
-                            "required": ["message_id", "part_id", "save_path"]
-                        }
-                    }
+                            "required": ["message_id", "part_id", "save_path"],
+                        },
+                    },
                 },
-                "required": ["attachments", toolhandler.USER_ID_ARG]
-            }
+                "required": ["attachments", toolhandler.USER_ID_ARG],
+            },
         )
 
-    def run_tool(self, args: dict) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+    def run_tool(
+        self, args: dict
+    ) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
         if "attachments" not in args:
             raise RuntimeError("Missing required argument: attachments")
 
@@ -511,41 +568,40 @@ class BulkSaveAttachmentsToolHandler(toolhandler.ToolHandler):
                 results.append(
                     TextContent(
                         type="text",
-                        text=f"Failed to retrieve message with ID: {attachment_info['message_id']}"
+                        text=f"Failed to retrieve message with ID: {attachment_info['message_id']}",
                     )
                 )
                 continue
             # get attachment_id from part_id
             attachment_id = attachments[attachment_info["part_id"]]["attachmentId"]
             attachment_data = gmail_service.get_attachment(
-                attachment_info["message_id"], 
-                attachment_id
+                attachment_info["message_id"], attachment_id
             )
             if attachment_data is None:
                 results.append(
                     TextContent(
                         type="text",
-                        text=f"Failed to retrieve attachment with ID: {attachment_id} from message: {attachment_info['message_id']}"
+                        text=f"Failed to retrieve attachment with ID: {attachment_id} from message: {attachment_info['message_id']}",
                     )
                 )
                 continue
 
             file_data = attachment_data["data"]
-            try:    
+            try:
                 decoded_data = decode_base64_data(file_data)
                 with open(attachment_info["save_path"], "wb") as f:
                     f.write(decoded_data)
                 results.append(
                     TextContent(
                         type="text",
-                        text=f"Attachment saved to: {attachment_info['save_path']}"
+                        text=f"Attachment saved to: {attachment_info['save_path']}",
                     )
                 )
             except Exception as e:
                 results.append(
                     TextContent(
                         type="text",
-                        text=f"Failed to save attachment to {attachment_info['save_path']}: {str(e)}"
+                        text=f"Failed to save attachment to {attachment_info['save_path']}: {str(e)}",
                     )
                 )
                 continue

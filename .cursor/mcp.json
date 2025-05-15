@@ -1,0 +1,29 @@
+{
+  "mcpServers": {
+    "mcp-gsuite": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/Users/andrew/saga/mcp-gsuite",
+        "run",
+        "mcp-gsuite"
+      ],
+      "env": {
+        "GSUITE_CREDENTIALS_DIR": "/Users/andrew/saga/mcp-gsuite/.credentials",
+        "GSUITE_ACCOUNTS_FILE": ".accounts.json",
+        "GSUITE_CLIENT_SECRET_FILE": ".client_secret.json"
+      }
+    },
+    "base": {
+      "command": "uv",
+      "args": [
+        "--directory=/Users/andrew/saga/saaga-mcp-base",
+        "run",
+        "server"
+      ],
+      "env": {
+        "sqldb_path": "/Users/andrew/saga/mcp-gsuite/saaga-mcp-base2.sqlite3"
+      }
+    }
+  }
+}
