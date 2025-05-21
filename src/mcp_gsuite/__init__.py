@@ -3,11 +3,15 @@ from saaga_mcp_base.lib.logging import logger
 
 from mcp_gsuite.tools.gmail.query_emails import query_gmail_emails
 from mcp_gsuite.tools.gmail.create_reply import create_reply
-from mcp_gsuite.tools.gmail.get_email_by_id_with_attachments import (
-    get_email_by_id_with_attachments,
+from mcp_gsuite.tools.gmail.get_email_by_id import (
+    get_email_by_id,
 )
 from mcp_gsuite.tools.gmail.create_draft import create_draft
 from mcp_gsuite.tools.gmail.get_attachment import get_attachment
+from mcp_gsuite.tools.gmail.send_draft import send_draft
+from mcp_gsuite.tools.gmail.create_label import create_label
+from mcp_gsuite.tools.gmail.set_email_labels import set_email_labels
+from mcp_gsuite.tools.gmail.update_draft import update_draft
 
 from mcp_gsuite.tools.calendar.list_calendars import list_calendars
 from mcp_gsuite.tools.calendar.get_events import get_events
@@ -26,9 +30,13 @@ def main():
     all_tools = [
         query_gmail_emails,
         create_reply,
-        get_email_by_id_with_attachments,
+        get_email_by_id,
         create_draft,
         get_attachment,
+        send_draft,
+        create_label,
+        set_email_labels,
+        update_draft,
         list_calendars,
         get_events,
         create_event,

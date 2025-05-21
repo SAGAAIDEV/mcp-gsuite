@@ -10,12 +10,12 @@ from saaga_mcp_base import logger
 
 
 @format_docstring_with_user_id_arg
-async def get_email_by_id_with_attachments(user_id: str, email_id: str) -> str:
+async def get_email_by_id(user_id: str, email_id: str) -> str:
     """
     Fetch and parse a complete email message by its ID including attachment IDs.
 
     Args:
-        user_id: {user_id_arg}
+        user_id: {user_id_arg} d
         email_id (str): The Gmail message ID to retrieve
     """
     logger.info(
@@ -26,7 +26,7 @@ async def get_email_by_id_with_attachments(user_id: str, email_id: str) -> str:
         logger.debug(f"GmailService initialized for user_id: {user_id}")
 
         email_data, attachments = await asyncio.to_thread(
-            gmail_service.get_email_by_id_with_attachments, email_id=email_id
+            gmail_service.get_email_by_id, email_id=email_id
         )
 
         if email_data is None:

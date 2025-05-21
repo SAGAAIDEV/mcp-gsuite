@@ -229,6 +229,12 @@ class GmailService:
             logger.error(traceback.format_exc())
             return None, {}
 
+    def get_email_by_id_with_attachments(
+        self, email_id: str
+    ) -> Tuple[dict | None, dict]:
+        """Fetch and parse a complete email message by its ID, ensuring attachments are included."""
+        return self.get_email_by_id(email_id, with_attachments=True)
+
     def create_draft(
         self, to: str, subject: str, body: str, cc: list[str] | None = None
     ) -> dict | None:
@@ -304,6 +310,159 @@ class GmailService:
             )
             logger.error(traceback.format_exc())
             return False
+
+    def update_draft(
+        self,
+        draft_id: str,
+        to: str | None = None,
+        subject: str | None = None,
+        body: str | None = None,
+        cc: list[str] | None = None,
+    ) -> dict | None:
+        """
+        Update an existing draft email message.
+        Only provided fields will be updated.
+
+        Args:
+            draft_id (str): The ID of the draft to update.
+            to (str, optional): New email address of the recipient.
+            subject (str, optional): New subject line of the email.
+            body (str, optional): New body content of the email.
+            cc (list[str], optional): New list of email addresses to CC.
+
+        Returns:
+            dict: Updated draft message data if successful.
+            None: If update fails.
+        """
+        try:
+            # Get the current draft message to preserve existing fields if not updated
+            # We need 'format': 'full' to get enough details to reconstruct,
+            # or 'metadata' if we only update specific headers and body.
+            # For simplicity and robustness, let's fetch minimal data and reconstruct.
+            # However, the Gmail API's draft.update expects a full message resource.
+            # It's often easier to create a new MIME message with the *new* desired state.
+
+            # Fetch the existing draft details to get its current state, specifically threadId
+            existing_draft_metadata = (
+                self.service.users().drafts().get(userId="me", id=draft_id).execute()
+            )
+            if not existing_draft_metadata or "message" not in existing_draft_metadata:
+                logger.error(
+                    f"Could not retrieve existing draft {draft_id} for update for user_id {self.user_id}"
+                )
+                return None
+
+            # Get the original message ID and thread ID for context if needed, though draft update usually handles this.
+            original_message_id = existing_draft_metadata["message"].get(
+                "id"
+            )  # This is message ID, not draft ID
+            thread_id = existing_draft_metadata["message"].get("threadId")
+
+            # To update a draft, you typically provide the *new* complete message content.
+            # We need to know what the current 'to', 'subject', 'body', 'cc' are
+            # if we want to only update some of them.
+            # The API for draft update replaces the entire message part of the draft.
+            # So, if 'to' is not provided, the existing 'to' will be wiped unless we fetch it first.
+
+            # Fetch the full message of the draft to get all current parts
+            # This is resource intensive if only small changes are made.
+            # A more optimized way might involve more complex MIME manipulation,
+            # but for now, we'll re-create the message based on old + new.
+
+            # Simpler approach: Assume we always provide all necessary fields or rebuild from scratch.
+            # For now, let's assume the update provides all necessary components or it's a fresh message.
+            # If only some fields are provided, the others will be blanked out unless fetched and re-added.
+            # Let's require all fields or make them fall back to current draft's values if not provided.
+
+            # To properly update, we should fetch the full existing message if fields are optional.
+            # Let's fetch the raw message from the draft to be safe, then modify it.
+            # This is not straightforward with MIME parsing and rebuilding.
+
+            # Alternative: Gmail API draft.update replaces the draft's message with the one provided.
+            # So, we need to construct the *entire new* message.
+            # If 'to' is not given, what should it be? We need the old 'to'.
+            # This means we DO need to fetch the existing full message.
+
+            current_message_details = (
+                self.service.users()
+                .messages()
+                .get(userId="me", id=original_message_id, format="full")
+                .execute()
+            )
+            parsed_current_message = self._parse_message(
+                current_message_details, parse_body=True
+            )
+
+            if not parsed_current_message:
+                logger.error(
+                    f"Could not parse current message {original_message_id} of draft {draft_id} for update."
+                )
+                return None
+
+            updated_to = to if to is not None else parsed_current_message.get("to")
+            updated_subject = (
+                subject
+                if subject is not None
+                else parsed_current_message.get("subject")
+            )
+            updated_body = (
+                body if body is not None else parsed_current_message.get("body")
+            )
+
+            # CC needs careful handling: if cc is an empty list, it should clear CC.
+            # If cc is None, it means "don't change CC".
+            updated_cc_list = None
+            if cc is not None:  # If cc is provided (even if empty list)
+                updated_cc_list = cc
+            elif "cc" in parsed_current_message:  # if cc not provided, use existing
+                updated_cc_list = (
+                    parsed_current_message.get("cc").split(",")
+                    if isinstance(parsed_current_message.get("cc"), str)
+                    else parsed_current_message.get("cc")
+                )
+
+            if not updated_to:  # 'To' field is generally required
+                logger.error(
+                    f"Recipient ('to') field is missing for updating draft {draft_id}."
+                )
+                return None
+
+            mime_message = MIMEText(updated_body or "")  # Body can be empty
+            mime_message["to"] = updated_to
+            mime_message["subject"] = updated_subject or ""  # Subject can be empty
+
+            if updated_cc_list:
+                mime_message["cc"] = ",".join(updated_cc_list)
+
+            # Preserve In-Reply-To and References if they exist, for replies/forwards
+            if parsed_current_message.get("in_reply_to"):
+                mime_message["In-Reply-To"] = parsed_current_message.get("in_reply_to")
+            if parsed_current_message.get("references"):
+                mime_message["References"] = parsed_current_message.get("references")
+
+            raw_message = base64.urlsafe_b64encode(mime_message.as_bytes()).decode(
+                "utf-8"
+            )
+
+            updated_draft_body = {"message": {"raw": raw_message}}
+            # If the original draft was part of a thread, ensure the updated draft stays in it.
+            if thread_id:
+                updated_draft_body["message"]["threadId"] = thread_id
+
+            draft = (
+                self.service.users()
+                .drafts()
+                .update(userId="me", id=draft_id, body=updated_draft_body)
+                .execute()
+            )
+            return draft
+
+        except Exception as e:
+            logger.error(
+                f"Error updating draft {draft_id} for user_id {self.user_id}. Error: {str(e)}"
+            )
+            logger.error(traceback.format_exc())
+            return None
 
     def create_reply(
         self,
@@ -483,33 +642,76 @@ class GmailService:
     def set_email_labels(
         self,
         message_id: str,
-        label_ids_to_add: list[str] | None = None,
-        label_ids_to_remove: list[str] | None = None,
+        label_names_to_add: list[str] | None = None,
+        label_names_to_remove: list[str] | None = None,
     ) -> dict | None:
         """
-        Add or remove labels from an email message.
+        Add or remove labels from an email message using their names.
 
         Args:
             message_id (str): The ID of the message to modify.
-            label_ids_to_add (list[str], optional): List of label IDs to add.
-            label_ids_to_remove (list[str], optional): List of label IDs to remove.
+            label_names_to_add (list[str], optional): List of label names to add.
+            label_names_to_remove (list[str], optional): List of label names to remove.
 
         Returns:
             dict: The updated message resource if successful.
-            None: If modification fails.
+            None: If modification fails or label names cannot be resolved.
         """
         try:
+            resolved_label_ids_to_add = []
+            resolved_label_ids_to_remove = []
+
+            if label_names_to_add or label_names_to_remove:
+                all_user_labels = self.list_labels()  # Calls the method added earlier
+                if all_user_labels is None:
+                    logger.error(
+                        f"Could not list labels for user {self.user_id} to map names to IDs in set_email_labels."
+                    )
+                    return None  # Indicate failure to resolve/list labels
+
+                label_name_to_id_map = {
+                    label["name"].upper(): label["id"] for label in all_user_labels
+                }
+                logger.debug(
+                    f"Available labels for user {self.user_id} for mapping: {label_name_to_id_map}"
+                )
+
+                if label_names_to_add:
+                    for name in label_names_to_add:
+                        uid = label_name_to_id_map.get(name.upper())
+                        if uid:
+                            resolved_label_ids_to_add.append(uid)
+                        else:
+                            logger.warning(
+                                f"Label name '{name}' not found for user {self.user_id}. Ignoring for addition."
+                            )
+
+                if label_names_to_remove:
+                    for name in label_names_to_remove:
+                        uid = label_name_to_id_map.get(name.upper())
+                        if uid:
+                            resolved_label_ids_to_remove.append(uid)
+                        else:
+                            logger.warning(
+                                f"Label name '{name}' not found for user {self.user_id}. Ignoring for removal."
+                            )
+
+            # Remove duplicates that might arise if a name was already an ID-like string by chance
+            # or if names were repeated.
+            resolved_label_ids_to_add = list(set(resolved_label_ids_to_add))
+            resolved_label_ids_to_remove = list(set(resolved_label_ids_to_remove))
+
             modify_request = {}
-            if label_ids_to_add:
-                modify_request["addLabelIds"] = label_ids_to_add
-            if label_ids_to_remove:
-                modify_request["removeLabelIds"] = label_ids_to_remove
+            if resolved_label_ids_to_add:
+                modify_request["addLabelIds"] = resolved_label_ids_to_add
+            if resolved_label_ids_to_remove:
+                modify_request["removeLabelIds"] = resolved_label_ids_to_remove
 
             if not modify_request:
                 logger.info(
-                    f"No labels to add or remove for message {message_id} for user_id {self.user_id}."
+                    f"No valid labels to add or remove for message {message_id} for user_id {self.user_id} after name resolution."
                 )
-                # Potentially return the current message state or a specific status
+                # Return current message state if no actual changes are to be made
                 return (
                     self.service.users()
                     .messages()
@@ -523,10 +725,73 @@ class GmailService:
                 .modify(userId="me", id=message_id, body=modify_request)
                 .execute()
             )
+            logger.info(
+                f"Successfully modified labels for message {message_id} for user {self.user_id} using names. Added: {resolved_label_ids_to_add}, Removed: {resolved_label_ids_to_remove}"
+            )
             return updated_message
         except Exception as e:
             logger.error(
-                f"Error setting labels for message {message_id} for user_id {self.user_id}: {str(e)}"
+                f"Error setting labels by name for message {message_id} for user_id {self.user_id}: {str(e)}"
             )
+            logger.error(traceback.format_exc())
+            return None
+
+    def send_draft(self, draft_id: str) -> dict | None:
+        """
+        Sends a previously created draft email.
+
+        Args:
+            draft_id (str): The ID of the draft to send.
+
+        Returns:
+            dict: The sent message data if successful.
+            None: If sending fails.
+        """
+        try:
+            # Get the message from the draft
+            draft_message = (
+                self.service.users()
+                .drafts()
+                .get(userId="me", id=draft_id, format="raw")
+                .execute()
+            )
+
+            # The raw message content is in the 'raw' field
+            raw_message = draft_message["message"]["raw"]
+
+            # Send the message
+            sent_message = (
+                self.service.users()
+                .messages()
+                .send(userId="me", body={"raw": raw_message})
+                .execute()
+            )
+
+            # Optionally, delete the draft after sending
+            # self.delete_draft(draft_id) # Uncomment if you want to delete the draft automatically after sending
+
+            return sent_message
+
+        except Exception as e:
+            logger.error(
+                f"Error sending draft {draft_id} for user_id {self.user_id}: {str(e)}"
+            )
+            logger.error(traceback.format_exc())
+            return None
+
+    def list_labels(self) -> list[dict] | None:
+        """
+        List all labels for the user.
+
+        Returns:
+            list[dict]: A list of label resources (dictionaries), each containing id, name, etc.
+            None: If listing fails.
+        """
+        try:
+            results = self.service.users().labels().list(userId="me").execute()
+            labels = results.get("labels", [])
+            return labels
+        except Exception as e:
+            logger.error(f"Error listing labels for user_id {self.user_id}: {str(e)}")
             logger.error(traceback.format_exc())
             return None
