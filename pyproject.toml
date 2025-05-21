@@ -11,6 +11,7 @@ dependencies = [
  "google-auth>=2.36.0",
  "google-auth-oauthlib>=1.2.2",
  "httplib2>=0.22.0",
+ "loguru>=0.7.3",
  "mcp[cli]>=1.8.1",
  "oauth2client==4.1.3",
  "pydantic-settings>=2.9.1",
@@ -34,4 +35,4 @@ dev = [
 
 [project.scripts]
 mcp-gsuite = "mcp_gsuite:main"
-mcp-gsuite-auth = "mcp_gsuite.lib.google_auth_flow:main"
+mcp-gsuite-auth = "mcp_gsuite.lib.auth.google_auth_flow:main"

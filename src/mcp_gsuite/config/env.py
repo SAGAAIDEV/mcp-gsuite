@@ -8,7 +8,8 @@ from pydantic import Field
 
 class GSuiteConfig(BaseSettings):
     credentials_dir: str = Field(
-        "/Users/andrew/saga/mcp-gsuite/.credentials", env="GSUITE_CREDENTIALS_DIR"
+        "/Users/andrew/saga/mcp-servers/operations/mcp-gsuite/.credentials",
+        env="GSUITE_CREDENTIALS_DIR",
     )
     accounts_file: str = Field(".accounts.json", env="GSUITE_ACCOUNTS_FILE")
     client_secrets_file: str = Field(".client_secret.json", env="GSUITE_ACCOUNTS_FILE")

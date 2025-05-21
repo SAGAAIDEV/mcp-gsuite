@@ -5,15 +5,20 @@ import pickle  # Added import for pickle
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
+import sys
 
 # --- External ---
 from mcp_gsuite.config.env import gsuite_config  # Added for config
 import pydantic  # Added for AccountInfo
-from saaga_mcp_base.lib.logging import logger  # Added logger
+from loguru import logger  # Added logger
 from .utils import (
     construct_credential_path,
     get_email_from_credentials,
 )  # Added import for utils
+
+# Configure loguru to output to stdout
+logger.remove()
+logger.add(sys.stdout)
 
 # --- Configuration ---
 # TODO: IMPORTANT - Replace these with the actual scopes you need!
@@ -40,6 +45,7 @@ def authenticate(scopes=None):
         google.oauth2.credentials.Credentials: The authenticated credentials,
                                                or None if authentication fails.
     """
+    logger.info("Authenticating...")
     if scopes is None:
         scopes = DEFAULT_SCOPES
 
@@ -105,7 +111,9 @@ def authenticate(scopes=None):
 def main():
     creds = authenticate()
     logger.info(creds)
+    print(creds)
 
 
 if __name__ == "__main__":
-    fire.Fire(authenticate)
+    logger.info("Hello")
+    fire.Fire(main)

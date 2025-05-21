@@ -15,7 +15,10 @@ from mcp_gsuite.tools.calendar.create_event import create_event
 from mcp_gsuite.tools.calendar.delete_event import delete_event
 from mcp_gsuite.tools.calendar.update_event import update_event
 from mcp_gsuite.tools.auth import auth
-from saaga_mcp_base.base.base_mcp import create_mcp
+
+
+# from saaga_mcp_base.base.base_mcp import create_mcp
+from mcp.server.fastmcp import FastMCP
 
 
 def main():
@@ -34,7 +37,11 @@ def main():
         auth,
     ]
 
-    mcp = create_mcp("mcp_gsuite", tools=all_tools)
+    mcp = FastMCP("mcp_gsuite")
+    for tool in all_tools:
+        mcp.add_tool(tool)
+
+    # mcp = create_mcp("mcp_gsuite", tools=all_tools)
     mcp.run(transport="stdio")
 
 
